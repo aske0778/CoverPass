@@ -1,66 +1,103 @@
 // SPDX-License-Identifier: GPL-3.0
-
 pragma solidity >=0.8.2 <0.9.0;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-//import "@openzeppelin/contracts/utils/structs/MerkleTree.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-//using MerkleTree for MerkleTree.Bytes32PushTree;
-
 /**
- * @title Storage
- * @dev Store & retrieve value in a variable
- * @custom:dev-run-script ./scripts/deploy_with_ethers.ts
+ * @title CoverPass
+ * @notice Smart Contract for insurance verification using off-chain Merkle trees
  */
 contract CoverPass is AccessControl {
+    // Roles
     bytes32 public constant INSURER_ROLE = keccak256("INSURER_ROLE");
-    bytes32 public constant USER_ROLE = keccak256("USER_ROLE");
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
 
-    mapping(address => bytes32) public merkelRoots;
+    // State
+    bytes32 public merkleRoot;
 
-    uint256 number;
-
-    //bytes32 public merkleRoot;
-    //MerkleTree.Bytes32PushTree private tree;
+    // Events
+    event InsurancePublished(
+        address indexed insurer,
+        bytes32 indexed docHash,
+        uint256 index,
+        bytes32 newRoot
+    );
+    
+    event CoverageVerified(
+        address indexed verifier,
+        address indexed user,
+        bytes32 indexed docHash,
+        bool valid
+    );
 
     constructor(address defaultAdmin) {
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
-
-        
-        //merkleRoot = tree.setup(3, 0);
-        
-
-    }
-
-    // Inserts the merkel root of the insurance company, if they are whitelisted
-    function addMerkelRoot(bytes32 _root) public {
-        _checkRole(INSURER_ROLE, msg.sender);
-        merkelRoots[msg.sender] = _root;
     }
 
 
-    function verifyCoverage(bytes32[] memory _proof, bytes32 _root, bytes32 _leaf) public view returns (bool) {
-        _checkRole(VERIFIER_ROLE, msg.sender);
-        return MerkleProof.verify(_proof, _root, _leaf);
+    // ------------------------
+    // Insurer functions
+    // ------------------------
+
+    /**
+     * @notice Insurers publish a new insurance document by hashing it off-chain and submitting the hash
+     */
+    function publishInsurance(bytes32 newRoot, uint256 index, bytes32 docHash) external onlyRole(INSURER_ROLE) {
+        merkleRoot = newRoot;
+
+        emit InsurancePublished(msg.sender, docHash, index, newRoot);
+    }
+
+
+    // ------------------------
+    // Verifier functions
+    // ------------------------
+
+    /**
+     * @notice Verifiers check whether a user has coverage using a Merkle proof
+     */
+    function verifyCoverage(
+        address user,
+        bytes32 docHash,
+        bytes32[] calldata proof
+    ) external onlyRole(VERIFIER_ROLE) returns (address, bytes32, bool) {
+        bool valid = MerkleProof.verify(proof, merkleRoot, docHash);
+
+        emit CoverageVerified(msg.sender, user, docHash, valid);
+        return (user, docHash, valid);
+    }
+
+
+    // ------------------------
+    // Admin functions
+    // ------------------------
+
+    /**
+     * @notice Whitelist insurer
+     */
+    function whitelistInsurer(address insurer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(INSURER_ROLE, insurer);
     }
 
     /**
-     * @dev Store value in variable
-     * @param num value to store
+     * @notice Whitelist verifier
      */
-    // function publishInsurance();
-
-    function store(uint256 num) public {
-        number = num;
+    function whitelistVerifier(address caretaker) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(VERIFIER_ROLE, caretaker);
     }
 
     /**
-     * @dev Return value 
-     * @return value of 'number'
+     * @notice Remove authorization of insurer
      */
-    function retrieve() public view returns (uint256){
-        return number;
+    function revokeInsurer(address insurer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _revokeRole(INSURER_ROLE, insurer);
+    }
+
+    /**
+     * @notice Remove authorization of verifier
+     */
+    function revokeVerifier(address caretaker) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _revokeRole(VERIFIER_ROLE, caretaker);
     }
 }
