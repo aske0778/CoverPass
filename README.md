@@ -31,6 +31,7 @@ The main contract `CoverPass.sol` provides:
 - Node.js (v16+)
 - npm or yarn
 - Solidity compiler (v0.8.2+)
+- MetaMask or other Ethereum wallet
 
 ### Installation
 
@@ -50,51 +51,103 @@ The main contract `CoverPass.sol` provides:
    npm install --save-dev typescript ts-node @types/node
    ```
 
-## Usage
+## Deployment Workflow
 
-### 1. Generate Merkle Data
+### 1. Deploy Contract via Remix
 
-First, generate sample insurance documents and Merkle proofs:
+1. Go to [Remix IDE](https://remix.ethereum.org/)
+2. Create a new file and paste the contents of `contracts/CoverPass.sol`
+3. Compile the contract using Solidity compiler v0.8.2+
+4. Deploy to your preferred network (Sepolia, Goerli, or Mainnet)
+5. Copy the deployed contract address
+
+### 2. Setup Environment Variables
+
+Run the interactive setup script to create your `.env` file:
+
+```bash
+npm run setup_remix
+```
+
+This will guide you through creating a `.env` file with:
+- Your contract address from Remix deployment
+- Your wallet private key
+- RPC URL for your chosen network
+
+Alternatively, manually create a `.env` file in the project root:
+
+```env
+CONTRACT_ADDRESS=your_deployed_contract_address_here
+PRIVATE_KEY=your_wallet_private_key_here
+RPC_URL=your_rpc_url_here
+```
+
+**Important**: Never commit your `.env` file to version control!
+
+### 3. Generate Merkle Data
+
+Generate sample insurance documents and Merkle proofs for testing:
 
 ```bash
 npm run merkle
 ```
 
-This creates `merkle_data.json` with sample data for testing.
+This creates `insurance_documents.json` with sample data for testing.
 
-### 2. Deploy Contract
+## Usage
 
-Deploy the CoverPass contract to your network:
+### Role-Specific Interfaces
 
+#### Admin Interface
+Manage roles and permissions:
 ```bash
-# Set environment variables
-export PRIVATE_KEY="your_private_key_here"
-export RPC_URL="your_rpc_url_here"
-
-# Deploy
-npm run deploy
+npm run admin
 ```
 
-The deployment info is saved to `deployment.json`.
+Features:
+- Whitelist/revoke insurers and verifiers
+- View current roles and permissions
+- Monitor blockchain events in real-time
+- View event history and export data
+- Manage contract permissions
 
-### 3. Interact with Contract
-
-Run the interaction script to test contract functions:
-
+#### Insurer Interface
+Issue insurance documents:
 ```bash
-npm run interact
+npm run insurer
 ```
+
+Features:
+- Create new insurance policies
+- View current merkle root
+- Generate sample insurance data
+- Save issued documents locally
+
+#### Verifier Interface
+Verify insurance coverage:
+```bash
+npm run verifier
+```
+
+Features:
+- Verify coverage with document hashes
+- Use sample data for testing
+- View insurance documents
+- Check coverage status
 
 ## Scripts
 
-- **`deploy_coverpass.ts`**: Deploys the CoverPass contract
-- **`interact_coverpass.ts`**: Demonstrates contract interactions
+- **`setup_remix.ts`**: Interactive setup for connecting to Remix-deployed contracts
+- **`admin_ui.ts`**: Admin interface for managing roles and permissions
+- **`insurer_ui.ts`**: Insurer interface for issuing insurance documents
+- **`verifier_ui.ts`**: Verifier interface for checking insurance coverage
 - **`merkle_utils.ts`**: Generates Merkle trees and proofs using OpenZeppelin's merkletreejs
 
 ## Environment Variables
 
-- `PRIVATE_KEY`: Your wallet private key
-- `RPC_URL`: Ethereum RPC endpoint
+- `CONTRACT_ADDRESS`: Address of your deployed CoverPass contract
+- `PRIVATE_KEY`: Your wallet private key (for signing transactions)
+- `RPC_URL`: Ethereum RPC endpoint (e.g., Infura, Alchemy, or local node)
 
 ## Contract Functions
 
@@ -119,6 +172,7 @@ The contract includes comprehensive tests in the `tests/` directory.
 - Uses OpenZeppelin's AccessControl for role management
 - Merkle proofs ensure data integrity
 - No sensitive data stored on-chain
+- Private keys should never be committed to version control
 
 ## License
 

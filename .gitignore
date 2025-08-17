@@ -13,6 +13,7 @@ out/
 artifacts/
 cache/
 typechain/
+bin/
 
 # Environment variables
 .env
