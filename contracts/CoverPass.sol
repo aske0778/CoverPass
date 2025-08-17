@@ -129,9 +129,9 @@ contract CoverPass is AccessControl {
     }
 
     /**
-    * @notice Provide Merkle tree data in response to a request
+    * @notice Respond with the Merkle tree data to a request
     */
-    function provideMerkleTree(
+    function respondMerkleTree(
         uint256 blockNumber,
         bytes32 merkleRoot,
         bytes32 docHash,
@@ -151,22 +151,17 @@ contract CoverPass is AccessControl {
     }
 
 
-    // ------------------------
-    // Verifier functions
-    // ------------------------
-
     /**
     * @notice Request Merkle tree data for a specific block for verification
     */
     function requestMerkleTree(
-        uint policyID,
         uint256 blockNumber,
-        address user
+        bytes32 docHash
     ) external onlyRole(VERIFIER_ROLE) {
         require(blockNumber <= currentBlock.blockNumber, "Block doesn't exist");
         require(blockNumber > 0, "Invalid block number");
 
-        bytes32 docHash = keccak256(abi.encodePacked(policyID, user));
+        // bytes32 docHash = keccak256(abi.encodePacked(policyID, user));
     
         emit MerkleTreeRequest(
             msg.sender,
