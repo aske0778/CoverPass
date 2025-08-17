@@ -31,8 +31,8 @@ contract CoverPass is AccessControl {
         bool valid
     );
 
-    constructor(address defaultAdmin) {
-        _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
+    constructor() {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
 
