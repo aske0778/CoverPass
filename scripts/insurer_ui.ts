@@ -1,257 +1,378 @@
+import 'dotenv/config';
 import { ethers } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
-import 'dotenv/config';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-async function question(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, resolve);
-  });
+interface InsuranceBlock {
+    merkleRoot: string;
+    timestamp: number;
+    blockNumber: number;
+    insurer: string;
+    previousBlockHash: string;
+    insuranceCount: number;
 }
 
-async function main(): Promise<void> {
-  console.log('CoverPass Insurer Interface\n');
-  
-  // Configuration
-  const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-  const RPC_URL = process.env.RPC_URL || 'https://sepolia.infura.io/v3/YOUR_PROJECT_ID';
-  const PRIVATE_KEY = process.env.PRIVATE_KEY;
-  
-  if (!CONTRACT_ADDRESS) {
-    console.log('CONTRACT_ADDRESS environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('CONTRACT_ADDRESS=0x... npm run insurer');
-    rl.close();
-    return;
-  }
-  
-  if (!PRIVATE_KEY) {
-    console.log('PRIVATE_KEY environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('PRIVATE_KEY=0x... npm run insurer');
-    rl.close();
-    return;
-  }
-  
-  try {
-    // Connect to provider and wallet
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    
-    console.log(`Connected to: ${RPC_URL}`);
-    console.log(`Insurer address: ${wallet.address}`);
-    console.log(`Contract: ${CONTRACT_ADDRESS}\n`);
-    
-    // Load contract ABI
-    const abiPath = path.join(__dirname, '../bin/contracts/CoverPass.abi');
-    if (!fs.existsSync(abiPath)) {
-      throw new Error('CoverPass.abi not found. Please compile the contract first.');
-    }
-    
-    const contractAbi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, contractAbi, wallet);
-    
-    // Check if user is insurer
-    const insurerRole = await contract.INSURER_ROLE();
-    const isInsurer = await contract.hasRole(insurerRole, wallet.address);
-    
-    if (!isInsurer) {
-          console.log('Access denied. This address does not have insurer privileges.');
-    console.log('Ask an admin to whitelist you as an insurer.');
-      rl.close();
-      return;
-    }
-    
-    console.log('Insurer access confirmed!\n');
-    
-    // Main insurer menu
-    await showInsurerMenu(contract, wallet);
-    
-  } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
-  } finally {
-    rl.close();
-  }
+interface MerkleTreeData {
+    blockNumber: number;
+    merkleRoot: string;
+    documents: string[];
+    proofs: { [docHash: string]: string[] };
 }
 
-async function showInsurerMenu(contract: ethers.Contract, wallet: ethers.Wallet): Promise<void> {
-  while (true) {
-    console.log('\n=== Insurer Menu ===');
-    console.log('1. Issue New Insurance Document');
-    console.log('2. View Current Merkle Root');
-    console.log('3. Generate Sample Insurance Data');
-    console.log('4. Exit');
-    
-    const choice = await question('\nSelect an option (1-4): ');
-    
-    switch (choice) {
-      case '1':
-        await issueInsuranceDocument(contract);
-        break;
-      case '2':
-        await viewCurrentMerkleRoot(contract);
-        break;
-      case '3':
-        await generateSampleInsuranceData();
-        break;
-      case '4':
-        console.log('Goodbye!');
-        return;
-      default:
-        console.log('Invalid option. Please try again.');
+class InsurerUI {
+    private provider!: ethers.providers.JsonRpcProvider;
+    private wallet!: ethers.Wallet;
+    private contract!: ethers.Contract;
+    private abi: any;
+    private merkleTrees: Map<number, MerkleTreeData> = new Map();
+
+    constructor() {
+        this.loadEnvironment();
+        this.loadABI();
+        this.setupProvider();
+        this.setupWallet();
+        this.setupContract();
+        this.loadOffChainData();
     }
-  }
+
+    private loadEnvironment() {
+        if (!process.env.PRIVATE_KEY) {
+            throw new Error('PRIVATE_KEY not found in environment variables');
+        }
+        if (!process.env.RPC_URL) {
+            throw new Error('RPC_URL not found in environment variables');
+        }
+        if (!process.env.CONTRACT_ADDRESS) {
+            throw new Error('CONTRACT_ADDRESS not found in environment variables');
+        }
+    }
+
+    private loadABI() {
+        const abiPath = path.join(__dirname, '..', 'bin', 'contracts', 'CoverPass.abi');
+        if (!fs.existsSync(abiPath)) {
+            throw new Error('CoverPass.abi not found. Please compile the contract first.');
+        }
+        this.abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
+    }
+
+    private setupProvider() {
+        this.provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL!);
+    }
+
+    private setupWallet() {
+        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, this.provider);
+    }
+
+    private setupContract() {
+        this.contract = new ethers.Contract(
+            process.env.CONTRACT_ADDRESS!,
+            this.abi,
+            this.wallet
+        );
+    }
+
+    private loadOffChainData() {
+        const dataPath = path.join(__dirname, '..', 'data', 'insurer_merkle_trees.json');
+        if (fs.existsSync(dataPath)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+                this.merkleTrees = new Map(Object.entries(data).map(([key, value]) => [Number(key), value as MerkleTreeData]));
+                console.log(`Loaded ${this.merkleTrees.size} Merkle trees from off-chain storage`);
+            } catch (error) {
+                console.log('Could not load off-chain data, starting fresh');
+            }
+        }
+    }
+
+    private saveOffChainData() {
+        const dataDir = path.join(__dirname, '..', 'data');
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+        
+        const dataPath = path.join(dataDir, 'insurer_merkle_trees.json');
+        const data = Object.fromEntries(this.merkleTrees);
+        fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
+    }
+
+    async showMenu() {
+        console.log('\n=== CoverPass Insurer Interface ===');
+        console.log('1. Create Insurance Block');
+        console.log('2. View Current Block');
+        console.log('3. View Statistics');
+        console.log('4. Generate Sample Merkle Tree');
+        console.log('5. Store Merkle Tree Data');
+        console.log('6. Respond to Merkle Tree Request');
+        console.log('7. View Stored Merkle Trees');
+        console.log('8. Export Merkle Tree Data');
+        console.log('0. Exit');
+        console.log('===================================');
+    }
+
+    async handleChoice(choice: string) {
+        switch (choice) {
+            case '1':
+                await this.createInsuranceBlock();
+                break;
+            case '2':
+                await this.viewCurrentBlock();
+                break;
+            case '3':
+                await this.viewStatistics();
+                break;
+            case '4':
+                await this.generateSampleMerkleTree();
+                break;
+            case '5':
+                await this.storeMerkleTreeData();
+                break;
+            case '6':
+                await this.respondToMerkleTreeRequest();
+                break;
+            case '7':
+                this.viewStoredMerkleTrees();
+                break;
+            case '8':
+                this.exportMerkleTreeData();
+                break;
+            case '0':
+                console.log('Exiting...');
+                process.exit(0);
+            default:
+                console.log('Invalid choice. Please try again.');
+        }
+    }
+
+    async createInsuranceBlock() {
+        try {
+            const merkleRoot = await this.promptForInput('Enter Merkle root (0x...):');
+            const insuranceCount = await this.promptForNumber('Enter number of insurance documents:');
+
+            console.log('Creating insurance block...');
+            const tx = await this.contract.createInsuranceBlock(merkleRoot, insuranceCount);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Insurance block created successfully!');
+
+            // Store the Merkle tree data off-chain
+            const currentBlock = await this.contract.getCurrentBlock();
+            const merkleTreeData: MerkleTreeData = {
+                blockNumber: Number(currentBlock.blockNumber),
+                merkleRoot: merkleRoot,
+                documents: [],
+                proofs: {}
+            };
+            this.merkleTrees.set(Number(currentBlock.blockNumber), merkleTreeData);
+            this.saveOffChainData();
+
+        } catch (error) {
+            console.error('Error creating insurance block:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async viewCurrentBlock() {
+        try {
+            const block = await this.contract.getCurrentBlock();
+            console.log('\n=== Current Insurance Block ===');
+            console.log(`Block Number: ${block.blockNumber}`);
+            console.log(`Merkle Root: ${block.merkleRoot}`);
+            console.log(`Timestamp: ${new Date(Number(block.timestamp) * 1000).toISOString()}`);
+            console.log(`Insurer: ${block.insurer}`);
+            console.log(`Previous Block Hash: ${block.previousBlockHash}`);
+            console.log(`Insurance Count: ${block.insuranceCount}`);
+            console.log('===============================');
+        } catch (error) {
+            console.error('Error viewing current block:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async viewStatistics() {
+        try {
+            const [totalBlocks, totalInsuranceDocuments] = await this.contract.getStatistics();
+            console.log('\n=== Statistics ===');
+            console.log(`Total Blocks: ${totalBlocks}`);
+            console.log(`Total Insurance Documents: ${totalInsuranceDocuments}`);
+            console.log('==================');
+        } catch (error) {
+            console.error('Error viewing statistics:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async generateSampleMerkleTree() {
+        try {
+            const documentCount = await this.promptForNumber('Enter number of sample documents:');
+            
+            // Generate sample documents
+            const documents: string[] = [];
+            for (let i = 0; i < documentCount; i++) {
+                const docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(`Sample Document ${i + 1}`));
+                documents.push(docHash);
+            }
+
+            // Create Merkle tree (simplified - in real implementation you'd use a proper Merkle tree library)
+            const merkleRoot = ethers.utils.keccak256(ethers.utils.concat(documents));
+            
+            console.log('\n=== Generated Sample Merkle Tree ===');
+            console.log(`Merkle Root: ${merkleRoot}`);
+            console.log(`Document Count: ${documents.length}`);
+            console.log('Documents:');
+            documents.forEach((doc, index) => {
+                console.log(`  ${index + 1}. ${doc}`);
+            });
+            console.log('=====================================');
+
+            // Store in memory for later use
+            const blockNumber = await this.promptForNumber('Enter block number for this tree:');
+            const merkleTreeData: MerkleTreeData = {
+                blockNumber: blockNumber,
+                merkleRoot: merkleRoot,
+                documents: documents,
+                proofs: {}
+            };
+            this.merkleTrees.set(blockNumber, merkleTreeData);
+            this.saveOffChainData();
+
+        } catch (error) {
+            console.error('Error generating sample Merkle tree:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async storeMerkleTreeData() {
+        try {
+            const blockNumber = await this.promptForNumber('Enter block number:');
+            const merkleRoot = await this.promptForInput('Enter Merkle root:');
+            const documentsInput = await this.promptForInput('Enter document hashes (comma-separated):');
+            
+            const documents = documentsInput.split(',').map(doc => doc.trim());
+            
+            const merkleTreeData: MerkleTreeData = {
+                blockNumber: blockNumber,
+                merkleRoot: merkleRoot,
+                documents: documents,
+                proofs: {}
+            };
+            
+            this.merkleTrees.set(blockNumber, merkleTreeData);
+            this.saveOffChainData();
+            console.log('Merkle tree data stored successfully!');
+
+        } catch (error) {
+            console.error('Error storing Merkle tree data:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async respondToMerkleTreeRequest() {
+        try {
+            const blockNumber = await this.promptForNumber('Enter block number:');
+            const docHash = await this.promptForInput('Enter document hash:');
+            
+            const merkleTree = this.merkleTrees.get(blockNumber);
+            if (!merkleTree) {
+                console.log('Merkle tree not found for this block number');
+                return;
+            }
+
+            // Generate proof (simplified - in real implementation you'd use a proper Merkle tree library)
+            const proof = this.generateMerkleProof(merkleTree.documents, docHash);
+            
+            console.log('Responding to Merkle tree request...');
+            const tx = await this.contract.respondMerkleTree(
+                blockNumber,
+                merkleTree.merkleRoot,
+                docHash,
+                proof
+            );
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Merkle tree response sent successfully!');
+
+        } catch (error) {
+            console.error('Error responding to Merkle tree request:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    private generateMerkleProof(documents: string[], targetDoc: string): string[] {
+        // Simplified Merkle proof generation
+        // In a real implementation, you'd use a proper Merkle tree library
+        const index = documents.indexOf(targetDoc);
+        if (index === -1) {
+            throw new Error('Document not found in Merkle tree');
+        }
+        
+        // For demonstration, return some dummy proof hashes
+        return [
+            ethers.utils.keccak256(ethers.utils.toUtf8Bytes('proof1')),
+            ethers.utils.keccak256(ethers.utils.toUtf8Bytes('proof2')),
+            ethers.utils.keccak256(ethers.utils.toUtf8Bytes('proof3'))
+        ];
+    }
+
+    viewStoredMerkleTrees() {
+        console.log('\n=== Stored Merkle Trees ===');
+        if (this.merkleTrees.size === 0) {
+            console.log('No Merkle trees stored.');
+            return;
+        }
+
+        this.merkleTrees.forEach((tree, blockNumber) => {
+            console.log(`\nBlock ${blockNumber}:`);
+            console.log(`  Merkle Root: ${tree.merkleRoot}`);
+            console.log(`  Document Count: ${tree.documents.length}`);
+            console.log(`  Documents: ${tree.documents.slice(0, 3).join(', ')}${tree.documents.length > 3 ? '...' : ''}`);
+        });
+        console.log('===========================');
+    }
+
+    exportMerkleTreeData() {
+        const filename = `merkle_trees_export_${Date.now()}.json`;
+        const data = Object.fromEntries(this.merkleTrees);
+        fs.writeFileSync(filename, JSON.stringify(data, null, 2));
+        console.log(`Merkle tree data exported to ${filename}`);
+    }
+
+    private async promptForInput(prompt: string): Promise<string> {
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        return new Promise((resolve) => {
+            rl.question(prompt, (answer: string) => {
+                rl.close();
+                resolve(answer.trim());
+            });
+        });
+    }
+
+    private async promptForNumber(prompt: string): Promise<number> {
+        const input = await this.promptForInput(prompt);
+        return parseInt(input, 10);
+    }
+
+    async run() {
+        console.log('Starting CoverPass Insurer Interface...');
+        console.log(`Connected to contract: ${process.env.CONTRACT_ADDRESS}`);
+        console.log(`Insurer address: ${this.wallet.address}\n`);
+
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        while (true) {
+            await this.showMenu();
+            const choice = await new Promise<string>((resolve) => {
+                rl.question('Enter your choice: ', (answer: string) => {
+                    resolve(answer.trim());
+                });
+            });
+            await this.handleChoice(choice);
+        }
+    }
 }
 
-async function issueInsuranceDocument(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Issue New Insurance Document ===');
-  
-  try {
-    // Get insurance details
-    const policyNumber = await question('Enter policy number (e.g., POL-001-2024): ');
-    const coverageType = await question('Enter coverage type (e.g., Health, Auto, Life): ');
-    const amount = await question('Enter coverage amount (e.g., 10000): ');
-    const expiryDate = await question('Enter expiry date (YYYY-MM-DD): ');
-    
-    // Create document hash
-    const documentData = {
-      policyNumber,
-      coverageType,
-      amount,
-      expiryDate,
-      timestamp: new Date().toISOString()
-    };
-    
-    const documentString = JSON.stringify(documentData);
-    const docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(documentString));
-    
-    console.log('\nDocument Details:');
-    console.log(`   Policy: ${policyNumber}`);
-    console.log(`   Coverage: ${coverageType}`);
-    console.log(`   Amount: ${amount}`);
-    console.log(`   Expiry: ${expiryDate}`);
-    console.log(`   Hash: ${docHash}`);
-    
-    // For demo purposes, we'll use a simple merkle root
-    // In a real scenario, you'd build a proper merkle tree
-    const newRoot = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(`Root_${Date.now()}`));
-    const index = Math.floor(Math.random() * 1000000); // Random index for demo
-    
-    const confirm = await question('\nProceed with issuing this insurance? (y/N): ');
-    
-    if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
-      console.log('Insurance issuance cancelled.');
-      return;
-    }
-    
-    console.log('Issuing insurance document...');
-    const tx = await contract.publishInsurance(newRoot, index, docHash);
-    console.log(`Transaction hash: ${tx.hash}`);
-    
-    console.log('Waiting for confirmation...');
-    await tx.wait();
-    
-    console.log('Insurance document issued successfully!');
-    console.log(`New Merkle Root: ${newRoot}`);
-    console.log(`Index: ${index}`);
-    
-    // Save document info locally
-    const documentInfo = {
-      ...documentData,
-      docHash,
-      merkleRoot: newRoot,
-      index,
-      txHash: tx.hash,
-      timestamp: new Date().toISOString()
-    };
-    
-    const documentsPath = path.join(__dirname, '../insurance_documents.json');
-    let documents = [];
-    
-    if (fs.existsSync(documentsPath)) {
-      documents = JSON.parse(fs.readFileSync(documentsPath, 'utf8'));
-    }
-    
-    documents.push(documentInfo);
-    fs.writeFileSync(documentsPath, JSON.stringify(documents, null, 2));
-    
-    console.log('Document info saved to insurance_documents.json');
-    
-  } catch (error) {
-    console.log(`Failed to issue insurance: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function viewCurrentMerkleRoot(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Current Merkle Root ===');
-  
-  try {
-    const merkleRoot = await contract.merkleRoot();
-    
-    if (merkleRoot === ethers.constants.HashZero) {
-      console.log('No insurance documents have been issued yet.');
-    } else {
-      console.log(`Current Merkle Root: ${merkleRoot}`);
-    }
-    
-  } catch (error) {
-    console.log(`Failed to read merkle root: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function generateSampleInsuranceData(): Promise<void> {
-  console.log('\n=== Sample Insurance Data ===');
-  
-  const sampleDocuments = [
-    {
-      policyNumber: 'POL-001-2024',
-      coverageType: 'Health Insurance',
-      amount: '10000',
-      expiryDate: '2024-12-31',
-      user: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
-    },
-    {
-      policyNumber: 'POL-002-2024',
-      coverageType: 'Auto Insurance',
-      amount: '5000',
-      expiryDate: '2024-12-31',
-      user: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
-    },
-    {
-      policyNumber: 'POL-003-2024',
-      coverageType: 'Life Insurance',
-      amount: '50000',
-      expiryDate: '2024-12-31',
-      user: '0x90F79bf6EB2c4f870365E785982E1f101E93b906'
-    }
-  ];
-  
-  console.log('Sample insurance documents:');
-  sampleDocuments.forEach((doc, index) => {
-    console.log(`\n   ${index + 1}. Policy: ${doc.policyNumber}`);
-    console.log(`      Coverage: ${doc.coverageType}`);
-    console.log(`      Amount: ${doc.amount}`);
-    console.log(`      Expiry: ${doc.expiryDate}`);
-    console.log(`      User: ${doc.user}`);
-    
-    const docString = JSON.stringify(doc);
-    const docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(docString));
-    console.log(`      Hash: ${docHash}`);
-  });
-  
-  console.log('\nYou can use these sample documents to test the system.');
-  console.log('   Copy the hash values to use in verifier operations.');
-}
-
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error('Insurer UI failed:', error);
-    process.exit(1);
-  });
+// Run the insurer interface
+const insurerUI = new InsurerUI();
+insurerUI.run().catch(console.error);

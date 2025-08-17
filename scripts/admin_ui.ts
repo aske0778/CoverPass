@@ -1,523 +1,377 @@
+import 'dotenv/config';
 import { ethers } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
-import 'dotenv/config';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-// Event storage
-interface ContractEvent {
-  type: string;
-  blockNumber: number;
-  timestamp: string;
-  transactionHash: string;
-  data: any;
+interface InsuranceBlock {
+    merkleRoot: string;
+    timestamp: number;
+    blockNumber: number;
+    insurer: string;
+    previousBlockHash: string;
+    insuranceCount: number;
 }
 
-let eventHistory: ContractEvent[] = [];
-let isListening = false;
-let eventListener: any = null;
-
-async function question(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, resolve);
-  });
+interface EventHistory {
+    type: string;
+    timestamp: number;
+    data: any;
+    blockNumber: number;
 }
 
-async function main(): Promise<void> {
-  console.log('CoverPass Admin Interface\n');
-  
-  // Configuration
-  const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-  const RPC_URL = process.env.RPC_URL || 'https://sepolia.infura.io/v3/YOUR_PROJECT_ID';
-  const PRIVATE_KEY = process.env.PRIVATE_KEY;
-  
-  if (!CONTRACT_ADDRESS) {
-    console.log('CONTRACT_ADDRESS environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('CONTRACT_ADDRESS=0x... npm run admin');
-    rl.close();
-    return;
-  }
-  
-  if (!PRIVATE_KEY) {
-    console.log('PRIVATE_KEY environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('PRIVATE_KEY=0x... npm run admin');
-    rl.close();
-    return;
-  }
-  
-  try {
-    // Connect to provider and wallet
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    
-    console.log(`Connected to: ${RPC_URL}`);
-    console.log(`Admin address: ${wallet.address}`);
-    console.log(`Contract: ${CONTRACT_ADDRESS}\n`);
-    
-    // Load contract ABI
-    const abiPath = path.join(__dirname, '../bin/contracts/CoverPass.abi');
-    if (!fs.existsSync(abiPath)) {
-      throw new Error('CoverPass.abi not found. Please compile the contract first.');
-    }
-    
-    const contractAbi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, contractAbi, wallet);
-    
-    // Check if user is admin
-    const adminRole = await contract.DEFAULT_ADMIN_ROLE();
-    const isAdmin = await contract.hasRole(adminRole, wallet.address);
-    
-    if (!isAdmin) {
-      console.log('Access denied. This address does not have admin privileges.');
-      rl.close();
-      return;
-    }
-    
-    console.log('Admin access confirmed!\n');
-    
-    // Start listening to events
-    await startEventListening(contract, provider);
-    
-    // Main admin menu
-    await showAdminMenu(contract, wallet);
-    
-  } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
-  } finally {
-    // Clean up event listener
-    if (eventListener) {
-      eventListener.removeAllListeners();
-    }
-    rl.close();
-  }
-}
+class AdminUI {
+    private provider!: ethers.providers.JsonRpcProvider;
+    private wallet!: ethers.Wallet;
+    private contract!: ethers.Contract;
+    private eventHistory: EventHistory[] = [];
+    private abi: any;
 
-async function startEventListening(contract: ethers.Contract, provider: ethers.providers.JsonRpcProvider): Promise<void> {
-  try {
-    console.log('Setting up event listeners...');
-    
-    // Listen to InsurancePublished events
-    contract.on('InsurancePublished', (insurer, docHash, index, newRoot, event) => {
-      const contractEvent: ContractEvent = {
-        type: 'InsurancePublished',
-        blockNumber: event.blockNumber,
-        timestamp: new Date().toISOString(),
-        transactionHash: event.transactionHash,
-        data: {
-          insurer,
-          docHash,
-          index: index.toString(),
-          newRoot
+    constructor() {
+        this.loadEnvironment();
+        this.loadABI();
+        this.setupProvider();
+        this.setupWallet();
+        this.setupContract();
+        this.setupEventListeners();
+    }
+
+    private loadEnvironment() {
+        if (!process.env.PRIVATE_KEY) {
+            throw new Error('PRIVATE_KEY not found in environment variables');
         }
-      };
-      
-      eventHistory.unshift(contractEvent); // Add to beginning of array
-      if (eventHistory.length > 100) { // Keep only last 100 events
-        eventHistory = eventHistory.slice(0, 100);
-      }
-      
-      console.log(`\nNew Event: Insurance Published by ${insurer}`);
-      console.log(`   Document Hash: ${docHash}`);
-      console.log(`   Index: ${index.toString()}`);
-      console.log(`   New Root: ${newRoot}`);
-      console.log(`   Block: ${event.blockNumber}`);
-      console.log(`   TX: ${event.transactionHash}`);
-    });
-    
-    // Listen to CoverageVerified events
-    contract.on('CoverageVerified', (verifier, user, docHash, valid, event) => {
-      const contractEvent: ContractEvent = {
-        type: 'CoverageVerified',
-        blockNumber: event.blockNumber,
-        timestamp: new Date().toISOString(),
-        transactionHash: event.transactionHash,
-        data: {
-          verifier,
-          user,
-          docHash,
-          valid
+        if (!process.env.RPC_URL) {
+            throw new Error('RPC_URL not found in environment variables');
         }
-      };
-      
-      eventHistory.unshift(contractEvent);
-      if (eventHistory.length > 100) {
-        eventHistory = eventHistory.slice(0, 100);
-      }
-      
-      console.log(`\nNew Event: Coverage Verified by ${verifier}`);
-      console.log(`   User: ${user}`);
-      console.log(`   Document Hash: ${docHash}`);
-      console.log(`   Valid: ${valid}`);
-      console.log(`   Block: ${event.blockNumber}`);
-      console.log(`   TX: ${event.transactionHash}`);
-    });
-    
-    // Listen to RoleGranted events
-    contract.on('RoleGranted', (role, account, sender, event) => {
-      const contractEvent: ContractEvent = {
-        type: 'RoleGranted',
-        blockNumber: event.blockNumber,
-        timestamp: new Date().toISOString(),
-        transactionHash: event.transactionHash,
-        data: {
-          role,
-          account,
-          sender
+        if (!process.env.CONTRACT_ADDRESS) {
+            throw new Error('CONTRACT_ADDRESS not found in environment variables');
         }
-      };
-      
-      eventHistory.unshift(contractEvent);
-      if (eventHistory.length > 100) {
-        eventHistory = eventHistory.slice(0, 100);
-      }
-      
-      console.log(`\nNew Event: Role Granted`);
-      console.log(`   Role: ${role}`);
-      console.log(`   Account: ${account}`);
-      console.log(`   Sender: ${sender}`);
-      console.log(`   Block: ${event.blockNumber}`);
-      console.log(`   TX: ${event.transactionHash}`);
-    });
-    
-    // Listen to RoleRevoked events
-    contract.on('RoleRevoked', (role, account, sender, event) => {
-      const contractEvent: ContractEvent = {
-        type: 'RoleRevoked',
-        blockNumber: event.blockNumber,
-        timestamp: new Date().toISOString(),
-        transactionHash: event.transactionHash,
-        data: {
-          role,
-          account,
-          sender
+    }
+
+    private loadABI() {
+        const abiPath = path.join(__dirname, '..', 'bin', 'contracts', 'CoverPass.abi');
+        if (!fs.existsSync(abiPath)) {
+            throw new Error('CoverPass.abi not found. Please compile the contract first.');
         }
-      };
-      
-      eventHistory.unshift(contractEvent);
-      if (eventHistory.length > 100) {
-        eventHistory = eventHistory.slice(0, 100);
-      }
-      
-      console.log(`\nNew Event: Role Revoked`);
-      console.log(`   Role: ${role}`);
-      console.log(`   Account: ${account}`);
-      console.log(`   Sender: ${sender}`);
-      console.log(`   Block: ${event.blockNumber}`);
-      console.log(`   TX: ${event.transactionHash}`);
-    });
-    
-    isListening = true;
-    console.log('Event listeners active! You will see real-time updates.\n');
-    
-  } catch (error) {
-    console.log(`Warning: Could not set up event listeners: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    console.log('   Event monitoring will not be available.\n');
-  }
-}
-
-async function showAdminMenu(contract: ethers.Contract, wallet: ethers.Wallet): Promise<void> {
-  while (true) {
-    console.log('\n=== Admin Menu ===');
-    console.log('1. Whitelist Insurer');
-    console.log('2. Whitelist Verifier');
-    console.log('3. Revoke Insurer');
-    console.log('4. Revoke Verifier');
-    console.log('5. View Current Roles');
-    console.log('6. View Event History');
-    console.log('7. View Recent Events');
-    console.log('8. Export Event History');
-    console.log('9. Clear Event History');
-    console.log('10. Exit');
-    
-    const choice = await question('\nSelect an option (1-10): ');
-    
-    switch (choice) {
-      case '1':
-        await whitelistInsurer(contract);
-        break;
-      case '2':
-        await whitelistVerifier(contract);
-        break;
-      case '3':
-        await revokeInsurer(contract);
-        break;
-      case '4':
-        await revokeVerifier(contract);
-        break;
-      case '5':
-        await viewCurrentRoles(contract);
-        break;
-      case '6':
-        await viewEventHistory();
-        break;
-      case '7':
-        await viewRecentEvents();
-        break;
-      case '8':
-        await exportEventHistory();
-        break;
-      case '9':
-        await clearEventHistory();
-        break;
-      case '10':
-        console.log('Goodbye!');
-        return;
-      default:
-        console.log('Invalid option. Please try again.');
+        this.abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
     }
-  }
-}
 
-async function whitelistInsurer(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Whitelist Insurer ===');
-  
-  const address = await question('Enter insurer address (0x...): ');
-  
-  if (!ethers.utils.isAddress(address)) {
-    console.log('Invalid Ethereum address format.');
-    return;
-  }
-  
-  try {
-    console.log('Whitelisting insurer...');
-    const tx = await contract.whitelistInsurer(address);
-    console.log(`Transaction hash: ${tx.hash}`);
-    
-    console.log('Waiting for confirmation...');
-    await tx.wait();
-    
-    console.log('Insurer whitelisted successfully!');
-  } catch (error) {
-    console.log(`Failed to whitelist insurer: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function whitelistVerifier(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Whitelist Verifier ===');
-  
-  const address = await question('Enter verifier address (0x...): ');
-  
-  if (!ethers.utils.isAddress(address)) {
-    console.log('Invalid Ethereum address format.');
-    return;
-  }
-  
-  try {
-    console.log('Whitelisting verifier...');
-    const tx = await contract.whitelistVerifier(address);
-    console.log(`Transaction hash: ${tx.hash}`);
-    
-    console.log('Waiting for confirmation...');
-    await tx.wait();
-    
-    console.log('Verifier whitelisted successfully!');
-  } catch (error) {
-    console.log(`Failed to whitelist verifier: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function revokeInsurer(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Revoke Insurer ===');
-  
-  const address = await question('Enter insurer address to revoke (0x...): ');
-  
-  if (!ethers.utils.isAddress(address)) {
-    console.log('Invalid Ethereum address format.');
-    return;
-  }
-  
-  try {
-    console.log('Revoking insurer...');
-    const tx = await contract.revokeInsurer(address);
-    console.log(`Transaction hash: ${tx.hash}`);
-    
-    console.log('Waiting for confirmation...');
-    await tx.wait();
-    
-    console.log('Insurer revoked successfully!');
-  } catch (error) {
-    console.log(`Failed to revoke insurer: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function revokeVerifier(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Revoke Verifier ===');
-  
-  const address = await question('Enter verifier address to revoke (0x...): ');
-  
-  if (!ethers.utils.isAddress(address)) {
-    console.log('Invalid Ethereum address format.');
-    return;
-  }
-  
-  try {
-    console.log('Revoking verifier...');
-    const tx = await contract.revokeVerifier(address);
-    console.log(`Transaction hash: ${tx.hash}`);
-    
-    console.log('Waiting for confirmation...');
-    await tx.wait();
-    
-    console.log('Verifier revoked successfully!');
-  } catch (error) {
-    console.log(`Failed to revoke verifier: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function viewCurrentRoles(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Current Roles ===');
-  
-  try {
-    const adminRole = await contract.DEFAULT_ADMIN_ROLE();
-    const insurerRole = await contract.INSURER_ROLE();
-    const verifierRole = await contract.VERIFIER_ROLE();
-    
-    console.log(`Admin Role: ${adminRole}`);
-    console.log(`Insurer Role: ${insurerRole}`);
-    console.log(`Verifier Role: ${verifierRole}`);
-    
-    // Note: In a real implementation, you'd want to track which addresses have which roles
-    // This would require additional contract functions or events
-    console.log('\nNote: To see which addresses have specific roles, you would need to');
-    console.log('   check the contract state or implement role tracking.');
-    
-  } catch (error) {
-    console.log(`Failed to read roles: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function viewEventHistory(): Promise<void> {
-  console.log('\n=== Event History ===');
-  
-  if (eventHistory.length === 0) {
-    console.log('No events recorded yet.');
-    return;
-  }
-  
-  console.log(`Total events recorded: ${eventHistory.length}\n`);
-  
-  eventHistory.forEach((event, index) => {
-    console.log(`${index + 1}. ${event.type} (Block ${event.blockNumber})`);
-    console.log(`   Time: ${event.timestamp}`);
-    console.log(`   TX: ${event.transactionHash}`);
-    
-    // Display event-specific data
-    switch (event.type) {
-      case 'InsurancePublished':
-        console.log(`   Insurer: ${event.data.insurer}`);
-        console.log(`   Doc Hash: ${event.data.docHash}`);
-        console.log(`   Index: ${event.data.index}`);
-        break;
-      case 'CoverageVerified':
-        console.log(`   Verifier: ${event.data.verifier}`);
-        console.log(`   User: ${event.data.user}`);
-        console.log(`   Valid: ${event.data.valid}`);
-        break;
-      case 'RoleGranted':
-        console.log(`   Role: ${event.data.role}`);
-        console.log(`   Account: ${event.data.account}`);
-        break;
-      case 'RoleRevoked':
-        console.log(`   Role: ${event.data.role}`);
-        console.log(`   Account: ${event.data.account}`);
-        break;
+    private setupProvider() {
+        this.provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL!);
     }
-    console.log('');
-  });
-}
 
-async function viewRecentEvents(): Promise<void> {
-  console.log('\n=== Recent Events (Last 10) ===');
-  
-  if (eventHistory.length === 0) {
-    console.log('No events recorded yet.');
-    return;
-  }
-  
-  const recentEvents = eventHistory.slice(0, 10);
-  
-  recentEvents.forEach((event, index) => {
-    console.log(`${index + 1}. ${event.type} (Block ${event.blockNumber})`);
-    console.log(`   Time: ${event.timestamp}`);
-    console.log(`   TX: ${event.transactionHash}`);
-    
-    // Display event-specific data
-    switch (event.type) {
-      case 'InsurancePublished':
-        console.log(`   Insurer: ${event.data.insurer}`);
-        console.log(`   Doc Hash: ${event.data.docHash.slice(0, 10)}...`);
-        break;
-      case 'CoverageVerified':
-        console.log(`   Verifier: ${event.data.verifier}`);
-        console.log(`   User: ${event.data.user}`);
-        console.log(`   Valid: ${event.data.valid}`);
-        break;
-      case 'RoleGranted':
-        console.log(`   Role: ${event.data.role.slice(0, 10)}...`);
-        console.log(`   Account: ${event.data.account}`);
-        break;
-      case 'RoleRevoked':
-        console.log(`   Role: ${event.data.role.slice(0, 10)}...`);
-        console.log(`   Account: ${event.data.account}`);
-        break;
+    private setupWallet() {
+        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, this.provider);
     }
-    console.log('');
-  });
+
+    private setupContract() {
+        this.contract = new ethers.Contract(
+            process.env.CONTRACT_ADDRESS!,
+            this.abi,
+            this.wallet
+        );
+    }
+
+    private setupEventListeners() {
+        // Listen for InsuranceBlockCreated events
+        this.contract.on('InsuranceBlockCreated', (merkleRoot, timestamp, blockNumber, insurer, previousBlockHash, insuranceCount, event) => {
+            const eventData = {
+                type: 'InsuranceBlockCreated',
+                timestamp: Number(timestamp),
+                data: {
+                    merkleRoot,
+                    blockNumber: Number(blockNumber),
+                    insurer,
+                    previousBlockHash,
+                    insuranceCount: Number(insuranceCount)
+                },
+                blockNumber: event.blockNumber
+            };
+            this.eventHistory.push(eventData);
+            console.log(`\n[EVENT] New insurance block created: Block #${blockNumber} by ${insurer}`);
+        });
+
+        // Listen for MerkleTreeRequest events
+        this.contract.on('MerkleTreeRequest', (sender, blockNumber, docHash, timestamp, event) => {
+            const eventData = {
+                type: 'MerkleTreeRequest',
+                timestamp: Number(timestamp),
+                data: {
+                    sender,
+                    blockNumber: Number(blockNumber),
+                    docHash
+                },
+                blockNumber: event.blockNumber
+            };
+            this.eventHistory.push(eventData);
+            console.log(`\n[EVENT] Merkle tree requested: Block #${blockNumber} by ${sender}`);
+        });
+
+        // Listen for MerkleTreeResponse events
+        this.contract.on('MerkleTreeResponse', (insurer, blockNumber, merkleRoot, proof, timestamp, event) => {
+            const eventData = {
+                type: 'MerkleTreeResponse',
+                timestamp: Number(timestamp),
+                data: {
+                    insurer,
+                    blockNumber: Number(blockNumber),
+                    merkleRoot,
+                    proofLength: proof.length
+                },
+                blockNumber: event.blockNumber
+            };
+            this.eventHistory.push(eventData);
+            console.log(`\n[EVENT] Merkle tree response: Block #${blockNumber} by ${insurer}`);
+        });
+
+        // Listen for role changes
+        this.contract.on('RoleGranted', (role, account, sender, event) => {
+            const eventData = {
+                type: 'RoleGranted',
+                timestamp: Date.now(),
+                data: {
+                    role,
+                    account,
+                    sender
+                },
+                blockNumber: event.blockNumber
+            };
+            this.eventHistory.push(eventData);
+            console.log(`\n[EVENT] Role granted: ${role} to ${account} by ${sender}`);
+        });
+
+        this.contract.on('RoleRevoked', (role, account, sender, event) => {
+            const eventData = {
+                type: 'RoleRevoked',
+                timestamp: Date.now(),
+                data: {
+                    role,
+                    account,
+                    sender
+                },
+                blockNumber: event.blockNumber
+            };
+            this.eventHistory.push(eventData);
+            console.log(`\n[EVENT] Role revoked: ${role} from ${account} by ${sender}`);
+        });
+    }
+
+    async showMenu() {
+        console.log('\n=== CoverPass Admin Interface ===');
+        console.log('1. Whitelist Insurer');
+        console.log('2. Whitelist Verifier');
+        console.log('3. Revoke Insurer');
+        console.log('4. Revoke Verifier');
+        console.log('5. View Current Block');
+        console.log('6. View Statistics');
+        console.log('7. View Event History');
+        console.log('8. Export Event History');
+        console.log('9. Clear Event History');
+        console.log('10. Check Role Status');
+        console.log('0. Exit');
+        console.log('================================');
+    }
+
+    async handleChoice(choice: string) {
+        switch (choice) {
+            case '1':
+                await this.whitelistInsurer();
+                break;
+            case '2':
+                await this.whitelistVerifier();
+                break;
+            case '3':
+                await this.revokeInsurer();
+                break;
+            case '4':
+                await this.revokeVerifier();
+                break;
+            case '5':
+                await this.viewCurrentBlock();
+                break;
+            case '6':
+                await this.viewStatistics();
+                break;
+            case '7':
+                this.viewEventHistory();
+                break;
+            case '8':
+                this.exportEventHistory();
+                break;
+            case '9':
+                this.clearEventHistory();
+                break;
+            case '10':
+                await this.checkRoleStatus();
+                break;
+            case '0':
+                console.log('Exiting...');
+                process.exit(0);
+            default:
+                console.log('Invalid choice. Please try again.');
+        }
+    }
+
+    async whitelistInsurer() {
+        try {
+            const address = await this.promptForAddress('Enter insurer address to whitelist:');
+            const tx = await this.contract.whitelistInsurer(address);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Insurer whitelisted successfully!');
+        } catch (error) {
+            console.error('Error whitelisting insurer:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async whitelistVerifier() {
+        try {
+            const address = await this.promptForAddress('Enter verifier address to whitelist:');
+            const tx = await this.contract.whitelistVerifier(address);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Verifier whitelisted successfully!');
+        } catch (error) {
+            console.error('Error whitelisting verifier:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async revokeInsurer() {
+        try {
+            const address = await this.promptForAddress('Enter insurer address to revoke:');
+            const tx = await this.contract.revokeInsurer(address);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Insurer revoked successfully!');
+        } catch (error) {
+            console.error('Error revoking insurer:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async revokeVerifier() {
+        try {
+            const address = await this.promptForAddress('Enter verifier address to revoke:');
+            const tx = await this.contract.revokeVerifier(address);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Verifier revoked successfully!');
+        } catch (error) {
+            console.error('Error revoking verifier:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async viewCurrentBlock() {
+        try {
+            const block = await this.contract.getCurrentBlock();
+            console.log('\n=== Current Insurance Block ===');
+            console.log(`Block Number: ${block.blockNumber}`);
+            console.log(`Merkle Root: ${block.merkleRoot}`);
+            console.log(`Timestamp: ${new Date(Number(block.timestamp) * 1000).toISOString()}`);
+            console.log(`Insurer: ${block.insurer}`);
+            console.log(`Previous Block Hash: ${block.previousBlockHash}`);
+            console.log(`Insurance Count: ${block.insuranceCount}`);
+            console.log('===============================');
+        } catch (error) {
+            console.error('Error viewing current block:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async viewStatistics() {
+        try {
+            const [totalBlocks, totalInsuranceDocuments] = await this.contract.getStatistics();
+            console.log('\n=== Statistics ===');
+            console.log(`Total Blocks: ${totalBlocks}`);
+            console.log(`Total Insurance Documents: ${totalInsuranceDocuments}`);
+            console.log('==================');
+        } catch (error) {
+            console.error('Error viewing statistics:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    viewEventHistory() {
+        console.log('\n=== Event History ===');
+        if (this.eventHistory.length === 0) {
+            console.log('No events recorded yet.');
+            return;
+        }
+
+        this.eventHistory.forEach((event, index) => {
+            console.log(`\n${index + 1}. ${event.type}`);
+            console.log(`   Timestamp: ${new Date(event.timestamp * 1000).toISOString()}`);
+            console.log(`   Block: ${event.blockNumber}`);
+            console.log(`   Data: ${JSON.stringify(event.data, null, 2)}`);
+        });
+        console.log('====================');
+    }
+
+    exportEventHistory() {
+        const filename = `event_history_${Date.now()}.json`;
+        fs.writeFileSync(filename, JSON.stringify(this.eventHistory, null, 2));
+        console.log(`Event history exported to ${filename}`);
+    }
+
+    clearEventHistory() {
+        this.eventHistory = [];
+        console.log('Event history cleared.');
+    }
+
+    async checkRoleStatus() {
+        try {
+            const address = await this.promptForAddress('Enter address to check roles:');
+            
+            const hasInsurerRole = await this.contract.hasRole(this.contract.INSURER_ROLE(), address);
+            const hasVerifierRole = await this.contract.hasRole(this.contract.VERIFIER_ROLE(), address);
+            const hasAdminRole = await this.contract.hasRole(await this.contract.DEFAULT_ADMIN_ROLE(), address);
+
+            console.log('\n=== Role Status ===');
+            console.log(`Address: ${address}`);
+            console.log(`Admin Role: ${hasAdminRole ? 'Yes' : 'No'}`);
+            console.log(`Insurer Role: ${hasInsurerRole ? 'Yes' : 'No'}`);
+            console.log(`Verifier Role: ${hasVerifierRole ? 'Yes' : 'No'}`);
+            console.log('==================');
+        } catch (error) {
+            console.error('Error checking role status:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    private async promptForAddress(prompt: string): Promise<string> {
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        return new Promise((resolve) => {
+            rl.question(prompt, (answer: string) => {
+                rl.close();
+                resolve(answer.trim());
+            });
+        });
+    }
+
+    async run() {
+        console.log('Starting CoverPass Admin Interface...');
+        console.log(`Connected to contract: ${process.env.CONTRACT_ADDRESS}`);
+        console.log(`Admin address: ${this.wallet.address}`);
+        console.log('Listening for events...\n');
+
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        while (true) {
+            await this.showMenu();
+            const choice = await new Promise<string>((resolve) => {
+                rl.question('Enter your choice: ', (answer: string) => {
+                    resolve(answer.trim());
+                });
+            });
+            await this.handleChoice(choice);
+        }
+    }
 }
 
-async function exportEventHistory(): Promise<void> {
-  console.log('\n=== Export Event History ===');
-  
-  if (eventHistory.length === 0) {
-    console.log('No events to export.');
-    return;
-  }
-  
-  try {
-    const exportPath = path.join(__dirname, '../event_history.json');
-    const exportData = {
-      exportedAt: new Date().toISOString(),
-      totalEvents: eventHistory.length,
-      events: eventHistory
-    };
-    
-    fs.writeFileSync(exportPath, JSON.stringify(exportData, null, 2));
-    console.log(`Event history exported to: ${exportPath}`);
-    console.log(`Exported ${eventHistory.length} events`);
-    
-  } catch (error) {
-    console.log(`Failed to export events: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function clearEventHistory(): Promise<void> {
-  console.log('\n=== Clear Event History ===');
-  
-  if (eventHistory.length === 0) {
-    console.log('No events to clear.');
-    return;
-  }
-  
-  const confirm = await question(`Are you sure you want to clear ${eventHistory.length} events? (y/N): `);
-  
-  if (confirm.toLowerCase() === 'y' || confirm.toLowerCase() === 'yes') {
-    eventHistory = [];
-    console.log('Event history cleared.');
-  } else {
-    console.log('Event history clear cancelled.');
-  }
-}
-
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error('Admin UI failed:', error);
-    process.exit(1);
-  });
+// Run the admin interface
+const adminUI = new AdminUI();
+adminUI.run().catch(console.error);

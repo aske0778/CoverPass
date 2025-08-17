@@ -1,334 +1,458 @@
+import 'dotenv/config';
 import { ethers } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
-import 'dotenv/config';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-async function question(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, resolve);
-  });
+interface InsuranceBlock {
+    merkleRoot: string;
+    timestamp: number;
+    blockNumber: number;
+    insurer: string;
+    previousBlockHash: string;
+    insuranceCount: number;
 }
 
-async function main(): Promise<void> {
-  console.log('CoverPass Verifier Interface\n');
-  
-  // Configuration
-  const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-  const RPC_URL = process.env.RPC_URL || 'https://sepolia.infura.io/v3/YOUR_PROJECT_ID';
-  const PRIVATE_KEY = process.env.PRIVATE_KEY;
-  
-  if (!CONTRACT_ADDRESS) {
-    console.log('CONTRACT_ADDRESS environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('CONTRACT_ADDRESS=0x... npm run verifier');
-    rl.close();
-    return;
-  }
-  
-  if (!PRIVATE_KEY) {
-    console.log('PRIVATE_KEY environment variable is required.');
-    console.log('Please set it in your .env file or run:');
-    console.log('PRIVATE_KEY=0x... npm run verifier');
-    rl.close();
-    return;
-  }
-  
-  try {
-    // Connect to provider and wallet
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    
-    console.log(`Connected to: ${RPC_URL}`);
-    console.log(`Verifier address: ${wallet.address}`);
-    console.log(`Contract: ${CONTRACT_ADDRESS}\n`);
-    
-    // Load contract ABI
-    const abiPath = path.join(__dirname, '../bin/contracts/CoverPass.abi');
-    if (!fs.existsSync(abiPath)) {
-      throw new Error('CoverPass.abi not found. Please compile the contract first.');
-    }
-    
-    const contractAbi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, contractAbi, wallet);
-    
-    // Check if user is verifier
-    const verifierRole = await contract.VERIFIER_ROLE();
-    const isVerifier = await contract.hasRole(verifierRole, wallet.address);
-    
-    if (!isVerifier) {
-          console.log('Access denied. This address does not have verifier privileges.');
-    console.log('Ask an admin to whitelist you as a verifier.');
-      rl.close();
-      return;
-    }
-    
-    console.log('Verifier access confirmed!\n');
-    
-    // Main verifier menu
-    await showVerifierMenu(contract, wallet);
-    
-  } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
-  } finally {
-    rl.close();
-  }
+interface StoredBlock {
+    blockNumber: number;
+    merkleRoot: string;
+    timestamp: number;
+    insurer: string;
+    previousBlockHash: string;
+    insuranceCount: number;
+    storedAt: string;
 }
 
-async function showVerifierMenu(contract: ethers.Contract, wallet: ethers.Wallet): Promise<void> {
-  while (true) {
-    console.log('\n=== Verifier Menu ===');
-    console.log('1. Verify Coverage with Document Hash');
-    console.log('2. Verify Coverage with Sample Data');
-    console.log('3. View Current Merkle Root');
-    console.log('4. Load Insurance Documents');
-    console.log('5. Exit');
-    
-    const choice = await question('\nSelect an option (1-5): ');
-    
-    switch (choice) {
-      case '1':
-        await verifyCoverageWithHash(contract);
-        break;
-      case '2':
-        await verifyCoverageWithSampleData(contract);
-        break;
-      case '3':
-        await viewCurrentMerkleRoot(contract);
-        break;
-      case '4':
-        await loadInsuranceDocuments();
-        break;
-      case '5':
-        console.log('Goodbye!');
-        return;
-      default:
-        console.log('Invalid option. Please try again.');
-    }
-  }
+interface VerificationRequest {
+    policyID: number;
+    blockNumber: number;
+    docHash: string;
+    requestedAt: string;
+    status: 'pending' | 'completed' | 'failed';
+    response?: any;
 }
 
-async function verifyCoverageWithHash(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Verify Coverage with Document Hash ===');
-  
-  try {
-    const userAddress = await question('Enter user address to verify (0x...): ');
-    
-    if (!ethers.utils.isAddress(userAddress)) {
-      console.log('Invalid Ethereum address format.');
-      return;
-    }
-    
-    const docHash = await question('Enter document hash (0x...): ');
-    
-    if (!docHash.startsWith('0x') || docHash.length !== 66) {
-      console.log('Invalid document hash format.');
-      return;
-    }
-    
-    // For demo purposes, we'll create a simple proof
-    // In a real scenario, this would be generated from the merkle tree
-    console.log('\nNote: This is a demo proof. In production, you would generate');
-    console.log('   the actual merkle proof from the insurance document tree.');
-    
-    const proof = [
-      ethers.utils.keccak256(ethers.utils.toUtf8Bytes('demo_proof_1')),
-      ethers.utils.keccak256(ethers.utils.toUtf8Bytes('demo_proof_2'))
-    ];
-    
-    console.log(`Generated proof with ${proof.length} elements`);
-    
-    const confirm = await question('\nProceed with verification? (y/N): ');
-    
-    if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
-      console.log('Verification cancelled.');
-      return;
-    }
-    
-    console.log('Verifying coverage...');
-    const result = await contract.verifyCoverage(userAddress, docHash, proof);
-    
-    console.log('\nCoverage verification completed!');
-    console.log(`User: ${result[0]}`);
-    console.log(`Document Hash: ${result[1]}`);
-    console.log(`Valid: ${result[2]}`);
-    
-    if (result[2]) {
-      console.log('Coverage verified successfully!');
-    } else {
-      console.log('Coverage verification failed.');
-      console.log('This could mean:');
-      console.log('   - Document hash is not in the merkle tree');
-      console.log('   - Proof is incorrect');
-      console.log('   - User does not have coverage');
-    }
-    
-  } catch (error) {
-    console.log(`Failed to verify coverage: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
+class VerifierUI {
+    private provider!: ethers.providers.JsonRpcProvider;
+    private wallet!: ethers.Wallet;
+    private contract!: ethers.Contract;
+    private abi: any;
+    private storedBlocks: Map<number, StoredBlock> = new Map();
+    private verificationRequests: Map<string, VerificationRequest> = new Map();
 
-async function verifyCoverageWithSampleData(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Verify Coverage with Sample Data ===');
-  
-  try {
-    const userAddress = await question('Enter user address to verify (0x...): ');
-    
-    if (!ethers.utils.isAddress(userAddress)) {
-      console.log('Invalid Ethereum address format.');
-      return;
+    constructor() {
+        this.loadEnvironment();
+        this.loadABI();
+        this.setupProvider();
+        this.setupWallet();
+        this.setupContract();
+        this.loadOffChainData();
+        this.setupEventListeners();
     }
-    
-    console.log('\nSample insurance documents:');
-    console.log('1. Health Insurance - POL-001-2024');
-    console.log('2. Auto Insurance - POL-002-2024');
-    console.log('3. Life Insurance - POL-003-2024');
-    
-    const choice = await question('\nSelect document (1-3): ');
-    
-    let docHash: string;
-    let coverageType: string;
-    
-    switch (choice) {
-      case '1':
-        const doc1 = {
-          policyNumber: 'POL-001-2024',
-          coverageType: 'Health Insurance',
-          amount: '10000',
-          expiryDate: '2024-12-31',
-          user: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+
+    private loadEnvironment() {
+        if (!process.env.PRIVATE_KEY) {
+            throw new Error('PRIVATE_KEY not found in environment variables');
+        }
+        if (!process.env.RPC_URL) {
+            throw new Error('RPC_URL not found in environment variables');
+        }
+        if (!process.env.CONTRACT_ADDRESS) {
+            throw new Error('CONTRACT_ADDRESS not found in environment variables');
+        }
+    }
+
+    private loadABI() {
+        const abiPath = path.join(__dirname, '..', 'bin', 'contracts', 'CoverPass.abi');
+        if (!fs.existsSync(abiPath)) {
+            throw new Error('CoverPass.abi not found. Please compile the contract first.');
+        }
+        this.abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
+    }
+
+    private setupProvider() {
+        this.provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL!);
+    }
+
+    private setupWallet() {
+        this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, this.provider);
+    }
+
+    private setupContract() {
+        this.contract = new ethers.Contract(
+            process.env.CONTRACT_ADDRESS!,
+            this.abi,
+            this.wallet
+        );
+    }
+
+    private loadOffChainData() {
+        const dataDir = path.join(__dirname, '..', 'data');
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        // Load stored blocks
+        const blocksPath = path.join(dataDir, 'verifier_blocks.json');
+        if (fs.existsSync(blocksPath)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(blocksPath, 'utf8'));
+                this.storedBlocks = new Map(Object.entries(data).map(([key, value]) => [Number(key), value as StoredBlock]));
+                console.log(`Loaded ${this.storedBlocks.size} blocks from off-chain storage`);
+            } catch (error) {
+                console.log('Could not load stored blocks, starting fresh');
+            }
+        }
+
+        // Load verification requests
+        const requestsPath = path.join(dataDir, 'verifier_requests.json');
+        if (fs.existsSync(requestsPath)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(requestsPath, 'utf8'));
+                this.verificationRequests = new Map(Object.entries(data).map(([key, value]) => [key, value as VerificationRequest]));
+                console.log(`Loaded ${this.verificationRequests.size} verification requests from off-chain storage`);
+            } catch (error) {
+                console.log('Could not load verification requests, starting fresh');
+            }
+        }
+    }
+
+    private saveOffChainData() {
+        const dataDir = path.join(__dirname, '..', 'data');
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        // Save stored blocks
+        const blocksPath = path.join(dataDir, 'verifier_blocks.json');
+        const blocksData = Object.fromEntries(this.storedBlocks);
+        fs.writeFileSync(blocksPath, JSON.stringify(blocksData, null, 2));
+
+        // Save verification requests
+        const requestsPath = path.join(dataDir, 'verifier_requests.json');
+        const requestsData = Object.fromEntries(this.verificationRequests);
+        fs.writeFileSync(requestsPath, JSON.stringify(requestsData, null, 2));
+    }
+
+    private setupEventListeners() {
+        // Listen for InsuranceBlockCreated events to store blocks off-chain
+        this.contract.on('InsuranceBlockCreated', (merkleRoot, timestamp, blockNumber, insurer, previousBlockHash, insuranceCount, event) => {
+            const storedBlock: StoredBlock = {
+                blockNumber: Number(blockNumber),
+                merkleRoot: merkleRoot,
+                timestamp: Number(timestamp),
+                insurer: insurer,
+                previousBlockHash: previousBlockHash,
+                insuranceCount: Number(insuranceCount),
+                storedAt: new Date().toISOString()
+            };
+            
+            this.storedBlocks.set(Number(blockNumber), storedBlock);
+            this.saveOffChainData();
+            
+            console.log(`\n[EVENT] New block stored off-chain: Block #${blockNumber} by ${insurer}`);
+        });
+
+        // Listen for MerkleTreeResponse events to update verification requests
+        this.contract.on('MerkleTreeResponse', (insurer, blockNumber, merkleRoot, proof, timestamp, event) => {
+            const requestKey = `${blockNumber}_${merkleRoot}`;
+            const request = this.verificationRequests.get(requestKey);
+            
+            if (request) {
+                request.status = 'completed';
+                request.response = {
+                    insurer,
+                    blockNumber: Number(blockNumber),
+                    merkleRoot,
+                    proofLength: proof.length,
+                    timestamp: Number(timestamp)
+                };
+                this.saveOffChainData();
+                
+                console.log(`\n[EVENT] Verification request completed: Block #${blockNumber}`);
+            }
+        });
+    }
+
+    async showMenu() {
+        console.log('\n=== CoverPass Verifier Interface ===');
+        console.log('1. Request Merkle Tree Data');
+        console.log('2. View Current Block');
+        console.log('3. View Stored Blocks');
+        console.log('4. View Verification Requests');
+        console.log('5. Verify Coverage with Hash');
+        console.log('6. Load Sample Documents');
+        console.log('7. Export Stored Data');
+        console.log('8. Sync Latest Block');
+        console.log('0. Exit');
+        console.log('====================================');
+    }
+
+    async handleChoice(choice: string) {
+        switch (choice) {
+            case '1':
+                await this.requestMerkleTreeData();
+                break;
+            case '2':
+                await this.viewCurrentBlock();
+                break;
+            case '3':
+                this.viewStoredBlocks();
+                break;
+            case '4':
+                this.viewVerificationRequests();
+                break;
+            case '5':
+                await this.verifyCoverageWithHash();
+                break;
+            case '6':
+                this.loadSampleDocuments();
+                break;
+            case '7':
+                this.exportStoredData();
+                break;
+            case '8':
+                await this.syncLatestBlock();
+                break;
+            case '0':
+                console.log('Exiting...');
+                process.exit(0);
+            default:
+                console.log('Invalid choice. Please try again.');
+        }
+    }
+
+    async requestMerkleTreeData() {
+        try {
+            const policyID = await this.promptForNumber('Enter policy ID:');
+            const blockNumber = await this.promptForNumber('Enter block number:');
+            
+            console.log('Requesting Merkle tree data...');
+            const tx = await this.contract.requestMerkleTree(policyID, blockNumber);
+            console.log(`Transaction sent: ${tx.hash}`);
+            await tx.wait();
+            console.log('Merkle tree request sent successfully!');
+
+            // Store the request locally
+            const docHash = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'address'], [policyID, this.wallet.address]));
+            const requestKey = `${blockNumber}_${docHash}`;
+            
+            const verificationRequest: VerificationRequest = {
+                policyID: policyID,
+                blockNumber: blockNumber,
+                docHash: docHash,
+                requestedAt: new Date().toISOString(),
+                status: 'pending'
+            };
+            
+            this.verificationRequests.set(requestKey, verificationRequest);
+            this.saveOffChainData();
+
+        } catch (error) {
+            console.error('Error requesting Merkle tree data:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    async viewCurrentBlock() {
+        try {
+            const block = await this.contract.getCurrentBlock();
+            console.log('\n=== Current Insurance Block ===');
+            console.log(`Block Number: ${block.blockNumber}`);
+            console.log(`Merkle Root: ${block.merkleRoot}`);
+            console.log(`Timestamp: ${new Date(Number(block.timestamp) * 1000).toISOString()}`);
+            console.log(`Insurer: ${block.insurer}`);
+            console.log(`Previous Block Hash: ${block.previousBlockHash}`);
+            console.log(`Insurance Count: ${block.insuranceCount}`);
+            console.log('===============================');
+        } catch (error) {
+            console.error('Error viewing current block:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    viewStoredBlocks() {
+        console.log('\n=== Stored Blocks ===');
+        if (this.storedBlocks.size === 0) {
+            console.log('No blocks stored off-chain.');
+            return;
+        }
+
+        this.storedBlocks.forEach((block, blockNumber) => {
+            console.log(`\nBlock ${blockNumber}:`);
+            console.log(`  Merkle Root: ${block.merkleRoot}`);
+            console.log(`  Timestamp: ${new Date(block.timestamp * 1000).toISOString()}`);
+            console.log(`  Insurer: ${block.insurer}`);
+            console.log(`  Insurance Count: ${block.insuranceCount}`);
+            console.log(`  Stored At: ${block.storedAt}`);
+        });
+        console.log('====================');
+    }
+
+    viewVerificationRequests() {
+        console.log('\n=== Verification Requests ===');
+        if (this.verificationRequests.size === 0) {
+            console.log('No verification requests.');
+            return;
+        }
+
+        this.verificationRequests.forEach((request, key) => {
+            console.log(`\nRequest: ${key}`);
+            console.log(`  Policy ID: ${request.policyID}`);
+            console.log(`  Block Number: ${request.blockNumber}`);
+            console.log(`  Status: ${request.status}`);
+            console.log(`  Requested At: ${request.requestedAt}`);
+            if (request.response) {
+                console.log(`  Response: ${JSON.stringify(request.response, null, 2)}`);
+            }
+        });
+        console.log('=============================');
+    }
+
+    async verifyCoverageWithHash() {
+        try {
+            const docHash = await this.promptForInput('Enter document hash (0x...):');
+            const blockNumber = await this.promptForNumber('Enter block number:');
+            
+            const storedBlock = this.storedBlocks.get(blockNumber);
+            if (!storedBlock) {
+                console.log('Block not found in off-chain storage. Please sync blocks first.');
+                return;
+            }
+
+            console.log('\n=== Coverage Verification ===');
+            console.log(`Document Hash: ${docHash}`);
+            console.log(`Block Number: ${blockNumber}`);
+            console.log(`Block Merkle Root: ${storedBlock.merkleRoot}`);
+            console.log(`Block Insurer: ${storedBlock.insurer}`);
+            console.log(`Block Timestamp: ${new Date(storedBlock.timestamp * 1000).toISOString()}`);
+            
+            // In a real implementation, you would verify the Merkle proof here
+            console.log('\nNote: This is a simplified verification.');
+            console.log('In a real implementation, you would:');
+            console.log('1. Request the Merkle proof from the insurer');
+            console.log('2. Verify the proof against the stored block root');
+            console.log('3. Confirm the document is included in the block');
+            
+            console.log('==============================');
+
+        } catch (error) {
+            console.error('Error verifying coverage:', error instanceof Error ? error.message : 'Unknown error');
+        }
+    }
+
+    loadSampleDocuments() {
+        console.log('\n=== Sample Documents ===');
+        
+        const sampleDocs = [
+            {
+                policyID: 1,
+                description: 'Health Insurance Policy',
+                docHash: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('Health Insurance Policy 1'))
+            },
+            {
+                policyID: 2,
+                description: 'Auto Insurance Policy',
+                docHash: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('Auto Insurance Policy 1'))
+            },
+            {
+                policyID: 3,
+                description: 'Life Insurance Policy',
+                docHash: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('Life Insurance Policy 1'))
+            }
+        ];
+
+        sampleDocs.forEach((doc, index) => {
+            console.log(`\n${index + 1}. ${doc.description}`);
+            console.log(`   Policy ID: ${doc.policyID}`);
+            console.log(`   Document Hash: ${doc.docHash}`);
+        });
+
+        console.log('\nYou can use these sample documents to test verification.');
+        console.log('=====================================');
+    }
+
+    exportStoredData() {
+        const filename = `verifier_data_export_${Date.now()}.json`;
+        const exportData = {
+            exportedAt: new Date().toISOString(),
+            blocks: Object.fromEntries(this.storedBlocks),
+            requests: Object.fromEntries(this.verificationRequests)
         };
-        docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(JSON.stringify(doc1)));
-        coverageType = 'Health Insurance';
-        break;
-      case '2':
-        const doc2 = {
-          policyNumber: 'POL-002-2024',
-          coverageType: 'Auto Insurance',
-          amount: '5000',
-          expiryDate: '2024-12-31',
-          user: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
-        };
-        docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(JSON.stringify(doc2)));
-        coverageType = 'Auto Insurance';
-        break;
-      case '3':
-        const doc3 = {
-          policyNumber: 'POL-003-2024',
-          coverageType: 'Life Insurance',
-          amount: '50000',
-          expiryDate: '2024-12-31',
-          user: '0x90F79bf6EB2c4f870365E785982E1f101E93b906'
-        };
-        docHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(JSON.stringify(doc3)));
-        coverageType = 'Life Insurance';
-        break;
-      default:
-                console.log('Invalid selection.');
-        return;
-      }
-      
-      console.log(`\nSelected: ${coverageType}`);
-      console.log(`Document Hash: ${docHash}`);
-    
-    // Generate demo proof
-    const proof = [
-      ethers.utils.keccak256(ethers.utils.toUtf8Bytes('sample_proof_1')),
-      ethers.utils.keccak256(ethers.utils.toUtf8Bytes('sample_proof_2'))
-    ];
-    
-    const confirm = await question('\nProceed with verification? (y/N): ');
-    
-    if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
-      console.log('Verification cancelled.');
-      return;
+        fs.writeFileSync(filename, JSON.stringify(exportData, null, 2));
+        console.log(`Verifier data exported to ${filename}`);
     }
-    
-    console.log('Verifying coverage...');
-    const result = await contract.verifyCoverage(userAddress, docHash, proof);
-    
-    console.log('\nCoverage verification completed!');
-    console.log(`User: ${result[0]}`);
-    console.log(`Document Hash: ${result[1]}`);
-    console.log(`Valid: ${result[2]}`);
-    
-    if (result[2]) {
-      console.log('Coverage verified successfully!');
-    } else {
-      console.log('Coverage verification failed.');
+
+    async syncLatestBlock() {
+        try {
+            const currentBlock = await this.contract.getCurrentBlock();
+            const blockNumber = Number(currentBlock.blockNumber);
+            
+            if (this.storedBlocks.has(blockNumber)) {
+                console.log(`Block ${blockNumber} is already stored.`);
+                return;
+            }
+
+            const storedBlock: StoredBlock = {
+                blockNumber: blockNumber,
+                merkleRoot: currentBlock.merkleRoot,
+                timestamp: Number(currentBlock.timestamp),
+                insurer: currentBlock.insurer,
+                previousBlockHash: currentBlock.previousBlockHash,
+                insuranceCount: Number(currentBlock.insuranceCount),
+                storedAt: new Date().toISOString()
+            };
+
+            this.storedBlocks.set(blockNumber, storedBlock);
+            this.saveOffChainData();
+            console.log(`Synced block ${blockNumber} to off-chain storage.`);
+
+        } catch (error) {
+            console.error('Error syncing latest block:', error instanceof Error ? error.message : 'Unknown error');
+        }
     }
-    
-  } catch (error) {
-    console.log(`Failed to verify coverage: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
+
+    private async promptForInput(prompt: string): Promise<string> {
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        return new Promise((resolve) => {
+            rl.question(prompt, (answer: string) => {
+                rl.close();
+                resolve(answer.trim());
+            });
+        });
+    }
+
+    private async promptForNumber(prompt: string): Promise<number> {
+        const input = await this.promptForInput(prompt);
+        return parseInt(input, 10);
+    }
+
+    async run() {
+        console.log('Starting CoverPass Verifier Interface...');
+        console.log(`Connected to contract: ${process.env.CONTRACT_ADDRESS}`);
+        console.log(`Verifier address: ${this.wallet.address}`);
+        console.log('Listening for events...\n');
+
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        while (true) {
+            await this.showMenu();
+            const choice = await new Promise<string>((resolve) => {
+                rl.question('Enter your choice: ', (answer: string) => {
+                    resolve(answer.trim());
+                });
+            });
+            await this.handleChoice(choice);
+        }
+    }
 }
 
-async function viewCurrentMerkleRoot(contract: ethers.Contract): Promise<void> {
-  console.log('\n=== Current Merkle Root ===');
-  
-  try {
-    const merkleRoot = await contract.merkleRoot();
-    
-    if (merkleRoot === ethers.constants.HashZero) {
-      console.log('No insurance documents have been issued yet.');
-    } else {
-      console.log(`Current Merkle Root: ${merkleRoot}`);
-    }
-    
-  } catch (error) {
-    console.log(`Failed to read merkle root: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function loadInsuranceDocuments(): Promise<void> {
-  console.log('\n=== Load Insurance Documents ===');
-  
-  const documentsPath = path.join(__dirname, '../insurance_documents.json');
-  
-  if (!fs.existsSync(documentsPath)) {
-    console.log('No insurance documents found.');
-    console.log('Ask an insurer to issue some documents first.');
-    return;
-  }
-  
-  try {
-    const documents = JSON.parse(fs.readFileSync(documentsPath, 'utf8'));
-    
-    if (documents.length === 0) {
-      console.log('No insurance documents found.');
-      return;
-    }
-    
-    console.log(`Found ${documents.length} insurance document(s):\n`);
-    
-    documents.forEach((doc: any, index: number) => {
-      console.log(`${index + 1}. Policy: ${doc.policyNumber}`);
-      console.log(`   Coverage: ${doc.coverageType}`);
-      console.log(`   Amount: ${doc.amount}`);
-      console.log(`   Expiry: ${doc.expiryDate}`);
-      console.log(`   Hash: ${doc.docHash}`);
-      console.log(`   Merkle Root: ${doc.merkleRoot}`);
-      console.log(`   Index: ${doc.index}`);
-      console.log(`   TX: ${doc.txHash}`);
-      console.log(`   Issued: ${doc.timestamp}`);
-      console.log('');
-    });
-    
-    console.log('You can copy these document hashes to verify coverage.');
-    
-  } catch (error) {
-    console.log(`Failed to load documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error('Verifier UI failed:', error);
-    process.exit(1);
-  });
+// Run the verifier interface
+const verifierUI = new VerifierUI();
+verifierUI.run().catch(console.error);
