@@ -1,6 +1,6 @@
 # CoverPass
 
-Minimal setup to compile locally and use the web UI with MetaMask.
+Smart contract for decentralized insurance protocol and accompanying dashboard as a web application.
 
 ## Prerequisites
 - Node.js 16+
