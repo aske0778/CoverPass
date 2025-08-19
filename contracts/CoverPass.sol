@@ -14,6 +14,7 @@ contract CoverPass is AccessControl {
     bytes32 public constant INSURER_ROLE = keccak256("INSURER_ROLE");
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
 
+    // Insurance block
     struct InsuranceBlock {
         bytes32 merkleRoot;
         uint256 timestamp;
@@ -23,12 +24,13 @@ contract CoverPass is AccessControl {
         uint256 insuranceCount;
     }
 
-    // struct Policy {
-    //     uint policyID;
-    //     string data;
-    //     address user;
-    //     uint expiry;
-    // }
+    // Example of struct for policy data
+    struct Policy {
+        uint policyID;
+        string data;
+        address user;
+        uint expiry;
+    }
 
     // Only store current block on-chain
     InsuranceBlock public currentBlock;
@@ -36,6 +38,7 @@ contract CoverPass is AccessControl {
     // Total statistics
     uint256 public totalBlocks;
     uint256 public totalInsuranceDocuments;
+
 
     // ------------------------
     // Events
@@ -50,7 +53,6 @@ contract CoverPass is AccessControl {
         uint256 insuranceCount
     );
 
-    // Request-response pattern
     event MerkleTreeRequest(
         address indexed sender,
         uint256 indexed blockNumber,
@@ -117,12 +119,14 @@ contract CoverPass is AccessControl {
         );
         
         // Update current state
-        currentBlock.merkleRoot = newRoot;
-        currentBlock.timestamp = block.timestamp;
-        currentBlock.blockNumber++;
-        currentBlock.insurer = msg.sender;
-        currentBlock.previousBlockHash = newBlockHash;
-        currentBlock.insuranceCount = insuranceCount;
+        currentBlock = InsuranceBlock({
+            merkleRoot: newRoot,
+            timestamp: block.timestamp,
+            blockNumber: blockNumber++,
+            insurer: msg.sender,
+            previousBlockHash: newBlockHash,
+            insuranceCount: insuranceCount
+        });
         
         totalBlocks++;
         totalInsuranceDocuments += insuranceCount;
@@ -149,7 +153,6 @@ contract CoverPass is AccessControl {
             block.timestamp
         );
     }
-
 
     /**
     * @notice Request Merkle tree data for a specific block for verification
@@ -228,25 +231,5 @@ contract CoverPass is AccessControl {
      */
     function getStatistics() external view returns (uint256, uint256) {
         return (totalBlocks, totalInsuranceDocuments);
-    }
-
-    /**
-    * @notice Request Merkle tree data for a specific block for verification
-    */
-    function requestMerkleTree(
-        uint policyID,
-        uint256 blockNumber
-    ) external {
-        require(blockNumber <= currentBlock.blockNumber, "Block doesn't exist");
-        require(blockNumber > 0, "Invalid block number");
-
-        bytes32 docHash = keccak256(abi.encodePacked(policyID, msg.sender));
-    
-        emit MerkleTreeRequest(
-            msg.sender,
-            blockNumber,
-            docHash,
-            block.timestamp
-        );
     }
 }
