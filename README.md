@@ -19,12 +19,14 @@ npm install
   - `bin/contracts/CoverPass.abi`
   - `bin/contracts/CoverPass.bin`
 
-3) Run the web UI
+3) Run the web UI 
 ```bash
 npm run web
 ```
 
-4) Connect MetaMask and deploy/use
+4) Connect to the web server at ``http://localhost:3000``
+
+5) Connect MetaMask and deploy/use
 - On the index page, connect MetaMask and deploy using the ABI/bytecode from `bin/contracts/`.
 - Copy the deployed address.
 - On `Admin`, `Insurer`, or `Verifier` pages, paste the contract address and connect.
