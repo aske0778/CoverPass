@@ -1,0 +1,48 @@
+{
+  "name": "coverpass",
+  "version": "1.0.0",
+  "description": "Smart Contract for insurance verification using off-chain Merkle trees",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build": "tsc",
+    "web": "node web-server.js",
+    "web:admin": "node web-server.js --open=admin",
+    "web:insurer": "node web-server.js --open=insurer",
+    "web:verifier": "node web-server.js --open=verifier",
+    "web:index": "node web-server.js --open=index",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aske0778/CoverPass.git"
+  },
+  "keywords": [
+    "blockchain",
+    "smart-contracts",
+    "insurance",
+    "merkle-tree",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/aske0778/CoverPass/issues"
+  },
+  "homepage": "https://github.com/aske0778/CoverPass#readme",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^17.2.1",
+    "ethers": "^5.7.2",
+    "express": "^4.18.2",
+    "merkletreejs": "^0.3.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
