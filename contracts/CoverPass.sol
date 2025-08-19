@@ -122,7 +122,7 @@ contract CoverPass is AccessControl {
         currentBlock = InsuranceBlock({
             merkleRoot: newRoot,
             timestamp: block.timestamp,
-            blockNumber: blockNumber++,
+            blockNumber: currentBlock.blockNumber + 1,
             insurer: msg.sender,
             previousBlockHash: newBlockHash,
             insuranceCount: insuranceCount

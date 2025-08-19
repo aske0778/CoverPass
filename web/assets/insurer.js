@@ -59,30 +59,6 @@ async function respondMerkleTree() {
 	} catch (e) { showStatus('responseStatus', e.message, 'error'); }
 }
 
-async function viewStatistics() {
-	try {
-		const [totalBlocks, totalInsurance] = await contract.getStatistics();
-		document.getElementById('statistics').innerHTML = `
-			<div class="stats-grid">
-				<div class="stat-card"><div class="stat-value">${totalBlocks}</div><div class="stat-label">Total Blocks</div></div>
-				<div class="stat-card"><div class="stat-value">${totalInsurance}</div><div class="stat-label">Total Insurance</div></div>
-			</div>`;
-	} catch (e) { document.getElementById('statistics').innerHTML = `<div class="status error">${e.message}</div>`; }
-}
-
-async function viewCurrentBlock() {
-	try {
-		const block = await contract.getCurrentBlock();
-		document.getElementById('currentBlock').innerHTML = `
-			<div class="stats-grid">
-				<div class="stat-card"><div class="stat-label">Merkle Root</div><div class="stat-value">${block.merkleRoot}</div></div>
-				<div class="stat-card"><div class="stat-label">Block Number</div><div class="stat-value">${block.blockNumber}</div></div>
-				<div class="stat-card"><div class="stat-label">Insurer</div><div class="stat-value">${block.insurer}</div></div>
-				<div class="stat-card"><div class="stat-label">Insurance Count</div><div class="stat-value">${block.insuranceCount}</div></div>
-			</div>`;
-	} catch (e) { document.getElementById('currentBlock').innerHTML = `<div class="status error">${e.message}</div>`; }
-}
-
 function storeMerkleTree(blockNumber, merkleRoot, insuranceCount) {
 	const stored = JSON.parse(localStorage.getItem('merkleTrees') || '{}');
 	stored[blockNumber] = { merkleRoot, insuranceCount, timestamp: new Date().toISOString() };
@@ -129,3 +105,35 @@ function stopListening() {
 		showStatus('eventsList', 'Stopped listening for events', 'info');
 	}
 }
+
+function randomBytes32() {
+	const bytes = new Uint8Array(32);
+	if (window.crypto && window.crypto.getRandomValues) {
+		window.crypto.getRandomValues(bytes);
+	} else {
+		for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
+	}
+	let hex = '0x';
+	for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+	return hex;
+}
+
+async function createDummyInsuranceBlock() {
+	try {
+		if (!contract) return showStatus('blockStatus', 'Connect first', 'error');
+		const dummyRoot = randomBytes32();
+		const dummyCount = 5;
+		showStatus('blockStatus', 'Sending dummy block tx…', 'info');
+		await (await contract.createInsuranceBlock(dummyRoot, dummyCount)).wait();
+		const block = await contract.getCurrentBlock();
+		storeMerkleTree(block.blockNumber.toString(), dummyRoot, dummyCount);
+		showStatus('blockStatus', `Dummy block created! #${block.blockNumber}`, 'success');
+	} catch (e) { showStatus('blockStatus', e.message, 'error'); }
+}
+
+window.connectWithMetaMask = connectWithMetaMask;
+window.createInsuranceBlock = createInsuranceBlock;
+window.createDummyInsuranceBlock = createDummyInsuranceBlock;
+window.respondMerkleTree = respondMerkleTree;
+window.startListening = startListening;
+window.stopListening = stopListening;

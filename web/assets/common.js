@@ -38,3 +38,27 @@ function addEventCard(listId, title, data) {
 	`;
 	list.insertBefore(item, list.firstChild);
 }
+
+async function viewCurrentBlock() {
+	try {
+		const block = await contract.getCurrentBlock();
+		document.getElementById('currentBlock').innerHTML = `
+			<div class="stat-card"><div class="stat-label">Merkle Root</div><div class="stat-value">${block.merkleRoot}</div></div>
+			<div class="stat-card"><div class="stat-label">Block Number</div><div class="stat-value">${block.blockNumber}</div></div>
+			<div class="stat-card"><div class="stat-label">Insurer</div><div class="stat-value">${block.insurer}</div></div>
+			<div class="stat-card"><div class="stat-label">Insurance Count</div><div class="stat-value">${block.insuranceCount}</div></div>`;
+	} catch (e) {
+		document.getElementById('currentBlock').innerHTML = `<div class="status error">${e.message}</div>`;
+	}
+}
+
+async function viewStatistics() {
+	try {
+		const [totalBlocks, totalInsurance] = await contract.getStatistics();
+		document.getElementById('statistics').innerHTML = `
+			<div class="stats-grid">
+				<div class="stat-card"><div class="stat-value">${totalBlocks}</div><div class="stat-label">Total Blocks</div></div>
+				<div class="stat-card"><div class="stat-value">${totalInsurance}</div><div class="stat-label">Total Insurance</div></div>
+			</div>`;
+	} catch (e) { document.getElementById('statistics').innerHTML = `<div class="status error">${e.message}</div>`; }
+}

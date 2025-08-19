@@ -3,29 +3,21 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>CoverPass</title>
+	<title>Deploy CoverPass</title>
 	<link rel="stylesheet" href="assets/styles.css">
 </head>
 <body class="role-admin">
 	<div class="container">
-		<h1>CoverPass</h1>
+		<h1>Deploy CoverPass</h1>
 		<div class="section">
-			<h2>Open Dashboards</h2>
-			<button onclick="location.href='admin.html'">Admin</button>
-			<button onclick="location.href='insurer.html'">Insurer</button>
-			<button onclick="location.href='verifier.html'">Verifier</button>
-		</div>
-		<div class="section">
-			<h2>Deploy CoverPass (MetaMask)</h2>
-			<div class="form-group">
-				<button onclick="connectWithMetaMask()">Connect with MetaMask</button>
-			</div>
+			<h2>Wallet</h2>
+			<button onclick="connectWithMetaMask()">Connect with MetaMask</button>
 			<div id="status"></div>
 			<div id="accountAddress"></div>
 		</div>
 		<div class="section">
 			<h2>Artifacts</h2>
-			<p>Click Load Artifacts to pull <code>CoverPass.abi</code> and <code>CoverPass.bin</code> from <code>bin/contracts/</code>, or paste them manually.</p>
+			<p>Paste ABI and Bytecode below, or click Load Artifacts if you placed <code>CoverPass.abi</code> and <code>CoverPass.bin</code> in <code>web/artifacts/</code>.</p>
 			<div class="form-group">
 				<label>ABI (JSON):</label>
 				<textarea id="abi" rows="8" placeholder='["function ...", "event ..."]'></textarea>
@@ -47,3 +39,4 @@
 	<script src="assets/deploy.js"></script>
 </body>
 </html>
+

@@ -9,6 +9,10 @@ const PORT = process.env.PORT || 3000;
 const webDir = path.join(__dirname, 'web');
 app.use(express.static(webDir));
 
+// Also serve compiled artifacts from bin/ so the browser can load ABI/bytecode
+const binDir = path.join(__dirname, 'bin');
+app.use('/bin', express.static(binDir));
+
 // Default route to index.html
 app.get('/', (_req, res) => {
 	res.sendFile(path.join(webDir, 'index.html'));
@@ -18,6 +22,7 @@ app.get('/', (_req, res) => {
 app.listen(PORT, () => {
 	console.log(`CoverPass web server listening on http://localhost:${PORT}`);
 	console.log(`Serving static files from: ${webDir}`);
+	console.log(`Exposing artifacts under /bin from: ${binDir}`);
 
 	// Parse --open flag (admin|insurer|verifier|index)
 	const arg = process.argv.find((a) => a.startsWith('--open='));

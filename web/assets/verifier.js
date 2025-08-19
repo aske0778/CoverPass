@@ -40,30 +40,6 @@ async function requestMerkleTree() {
 	} catch (e) { showStatus('requestStatus', e.message, 'error'); }
 }
 
-async function viewStatistics() {
-	try {
-		const [totalBlocks, totalInsurance] = await contract.getStatistics();
-		document.getElementById('statistics').innerHTML = `
-			<div class="stats-grid">
-				<div class="stat-card"><div class="stat-value">${totalBlocks}</div><div class="stat-label">Total Blocks</div></div>
-				<div class="stat-card"><div class="stat-value">${totalInsurance}</div><div class="stat-label">Total Insurance</div></div>
-			</div>`;
-	} catch (e) { document.getElementById('statistics').innerHTML = `<div class="status error">${e.message}</div>`; }
-}
-
-async function viewCurrentBlock() {
-	try {
-		const block = await contract.getCurrentBlock();
-		document.getElementById('currentBlock').innerHTML = `
-			<div class="stats-grid">
-				<div class="stat-card"><div class="stat-label">Merkle Root</div><div class="stat-value">${block.merkleRoot}</div></div>
-				<div class="stat-card"><div class="stat-label">Block Number</div><div class="stat-value">${block.blockNumber}</div></div>
-				<div class="stat-card"><div class="stat-label">Insurer</div><div class="stat-value">${block.insurer}</div></div>
-				<div class="stat-card"><div class="stat-label">Insurance Count</div><div class="stat-value">${block.insuranceCount}</div></div>
-			</div>`;
-	} catch (e) { document.getElementById('currentBlock').innerHTML = `<div class="status error">${e.message}</div>`; }
-}
-
 function storeBlock(blockNumber, merkleRoot, insurer, insuranceCount) {
 	const stored = JSON.parse(localStorage.getItem('blocks') || '{}');
 	stored[blockNumber] = { merkleRoot, insurer, insuranceCount, timestamp: new Date().toISOString() };
