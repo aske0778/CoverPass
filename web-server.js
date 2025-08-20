@@ -5,11 +5,9 @@ const { exec } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Serve static files from web/
 const webDir = path.join(__dirname, 'web');
 app.use(express.static(webDir));
 
-// Also serve compiled artifacts from bin/ so the browser can load ABI/bytecode
 const binDir = path.join(__dirname, 'bin');
 app.use('/bin', express.static(binDir));
 
@@ -24,7 +22,6 @@ app.listen(PORT, () => {
 	console.log(`Serving static files from: ${webDir}`);
 	console.log(`Exposing artifacts under /bin from: ${binDir}`);
 
-	// Parse --open flag (admin|insurer|verifier|index)
 	const arg = process.argv.find((a) => a.startsWith('--open='));
 	if (arg) {
 		const page = arg.split('=')[1] || 'index';

@@ -1,4 +1,3 @@
-// Ethers loader with fallback
 (function ensureEthers() {
 	const primary = 'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js';
 	const fallback = 'https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js';
